@@ -210,6 +210,14 @@ if(MIKTEX_MACOS_BUNDLE)
     get_property(_Qt${QT_SERIES}_Core_LOCATION TARGET Qt${QT_SERIES}::Core PROPERTY LOCATION)
     get_filename_component(Qt_BIN_DIR "${_Qt${QT_SERIES}_Core_LOCATION}" PATH)
     get_filename_component(Qt_BIN_DIR "${Qt_BIN_DIR}" PATH)
+    # Homebrew's Qt6 on macOS ships QtCore as a .framework bundle
+    # (.../lib/QtCore.framework/Versions/A/QtCore), so the two path strips
+    # above only reach ".../QtCore.framework/Versions". Two more are needed
+    # to reach the actual containing lib dir that fixup_bundle must search.
+    if(Qt_BIN_DIR MATCHES "\\.framework")
+        get_filename_component(Qt_BIN_DIR "${Qt_BIN_DIR}" PATH)
+        get_filename_component(Qt_BIN_DIR "${Qt_BIN_DIR}" PATH)
+    endif()
 endif()
 
 add_executable(${MIKTEX_PROG_NAME_CONSOLE} WIN32 MACOSX_BUNDLE ${sources})
@@ -256,10 +264,25 @@ install(TARGETS miktex-console
 # stibizt: https://github.com/Kitware/CMake/blob/master/Source/QtDialog/CMakeLists.txt
 if(MIKTEX_MACOS_BUNDLE)
     set(fixup_exe "\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${MIKTEX_MACOS_BUNDLE_DIR}/MacOS/${MIKTEX_MACOS_BUNDLE_NAME}")
-    # FIXME: non-standard icu lib dir
-    list(APPEND lib_dirs "/usr/local/opt/poppler-qt5/lib")
-    # FIXME: non-standard poppler-qt5 lib dir
-    list(APPEND lib_dirs "/usr/local/opt/icu4c/lib")
+    execute_process(
+        COMMAND brew --prefix
+        OUTPUT_VARIABLE homebrew_prefix
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(homebrew_prefix)
+        # These used to be hardcoded to /usr/local/opt/... (Intel Homebrew's
+        # prefix), which silently never matched on Apple Silicon (/opt/homebrew).
+        # FIXME: non-standard icu lib dir
+        list(APPEND lib_dirs "${homebrew_prefix}/opt/poppler-qt5/lib")
+        # FIXME: non-standard poppler-qt5 lib dir
+        list(APPEND lib_dirs "${homebrew_prefix}/opt/icu4c/lib")
+        # Homebrew symlinks most (non-keg-only) libraries here. Some Qt
+        # dependencies (e.g. brotli) reference siblings via @rpath with a
+        # nested @loader_path-relative rpath that fixup_bundle doesn't
+        # reliably chase through, so give it this directory explicitly.
+        list(APPEND lib_dirs "${homebrew_prefix}/lib")
+    endif()
     list(APPEND lib_dirs "\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${MIKTEX_LIBRARY_DESTINATION_DIR}")
     install(CODE "
         include(${CMAKE_SOURCE_DIR}/cmake/modules/BundleUtilitiesOverrides.cmake)
