@@ -21,8 +21,21 @@ set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules")
 set(CMAKE_LINK_DEPENDS_NO_SHARED 1)
 
 if(APPLE)
+    # CMAKE_(HOST_)SYSTEM_PROCESSOR is not yet populated this early (before
+    # project()/enable_language()), but CMAKE_OSX_DEPLOYMENT_TARGET must be
+    # set before project() to take effect, so query the host arch directly.
+    execute_process(
+        COMMAND uname -m
+        OUTPUT_VARIABLE miktex_apple_host_arch
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(miktex_apple_host_arch MATCHES "(arm64|aarch64)")
+        set(default_osx_deployment_target "11.0")
+    else()
+        set(default_osx_deployment_target "10.12")
+    endif()
     set(CMAKE_OSX_DEPLOYMENT_TARGET
-        "10.12"
+        "${default_osx_deployment_target}"
         CACHE STRING
         "The earliest version of MacOS X that MiKTeX will run on."
     )
@@ -1304,6 +1317,7 @@ check_function_exists(chown HAVE_CHOWN)
 check_function_exists(closedir HAVE_CLOSEDIR)
 check_function_exists(confstr HAVE_CONFSTR)
 check_function_exists(ctime HAVE_CTIME)
+check_function_exists(ctime_r HAVE_CTIME_R)
 check_function_exists(finite HAVE_FINITE)
 check_function_exists(fork HAVE_FORK)
 check_function_exists(fseeko64 HAVE_FSEEKO64)
