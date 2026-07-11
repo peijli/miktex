@@ -1,0 +1,33 @@
+## CodesignMacOSBundle.cmake.in
+##
+## Copyright (C) 2026 Peijing Li
+##
+## This file is free software; the copyright holder gives
+## unlimited permission to copy and/or distribute it, with or
+## without modifications, as long as this notice is preserved.
+
+## fixup_bundle()'s install_name_tool calls (in Programs/MiKTeX/Console/Qt/CMakeLists.txt)
+## invalidate whatever signature each copied dylib/framework had, and every
+## other install() rule across the project that lands files inside the .app
+## after that runs the same way. On Apple Silicon this is fatal at launch
+## (SIGKILL / CODESIGNING / Invalid Page), not cosmetic like it is on x86_64,
+## where unsigned code just runs. This must sign the bundle only after every
+## install() rule in the whole project has finished adding files to it, or
+## the seal is stale before packaging even starts -- hence CPACK_PRE_BUILD_SCRIPTS
+## (runs once the staging directory is fully populated, right before CPack
+## creates the .dmg) rather than an install(CODE ...) in any one subdirectory.
+##
+## This is separate from (and does not replace) WITH_CODE_SIGNING, which only
+## signs the outer .dmg with a real Developer ID identity.
+
+set(bundle_root "${CPACK_TEMPORARY_INSTALL_DIRECTORY}/@MIKTEX_MACOS_BUNDLE_NAME@.app")
+
+execute_process(
+    COMMAND codesign --force --deep --sign - "${bundle_root}"
+    RESULT_VARIABLE codesign_result
+    ERROR_VARIABLE codesign_error
+)
+
+if(NOT codesign_result EQUAL 0)
+    message(FATAL_ERROR "ad-hoc codesign of ${bundle_root} failed: ${codesign_error}")
+endif()
