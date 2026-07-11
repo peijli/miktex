@@ -2577,6 +2577,20 @@ set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
 
 set(CPACK_STRIP_SYMBOLS TRUE)
 
+if(MIKTEX_MACOS_BUNDLE)
+    # Ad-hoc re-sign the .app once every install() rule in the project has
+    # finished populating it (CPACK_PRE_BUILD_SCRIPTS runs after staging,
+    # right before packaging) -- see CodesignMacOSBundle.cmake.in for why
+    # this can't be done earlier, e.g. from inside fixup_bundle's own
+    # install(CODE ...) block.
+    configure_file(
+        cmake/modules/CodesignMacOSBundle.cmake.in
+        "${CMAKE_BINARY_DIR}/CodesignMacOSBundle.cmake"
+        @ONLY
+    )
+    list(APPEND CPACK_PRE_BUILD_SCRIPTS "${CMAKE_BINARY_DIR}/CodesignMacOSBundle.cmake")
+endif()
+
 include(CPack)
 
 if(MIKTEX_MACOS_BUNDLE AND WITH_CODE_SIGNING)
