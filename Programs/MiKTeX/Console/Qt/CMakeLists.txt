@@ -224,12 +224,32 @@ add_executable(${MIKTEX_PROG_NAME_CONSOLE} WIN32 MACOSX_BUNDLE ${sources})
 set_property(TARGET ${MIKTEX_PROG_NAME_CONSOLE} PROPERTY FOLDER ${MIKTEX_CURRENT_FOLDER})
 target_link_libraries(${MIKTEX_PROG_NAME_CONSOLE} ${libs})  
 if(MIKTEX_MACOS_BUNDLE)
+    set(miktex_macos_bundle_short_version_string "${MIKTEX_MAJOR_VERSION}.${MIKTEX_MINOR_VERSION}.${MIKTEX_PATCH_VERSION}")
+    if(GIT_FOUND AND IS_DIRECTORY "${CMAKE_SOURCE_DIR}/.git")
+        # Matches the "{version}+{commitAbbrev}" build-metadata convention
+        # miktexsetup.cpp already uses for Utils::GetGitInfo() (see
+        # gen-git-info.cmake); makes it possible to tell which exact commit a
+        # given .app was built from straight from Finder/crash-report
+        # "Version" fields, without needing GitInfo.h's separate build-time
+        # script (MIKTEX_HAVE_GIT_INFO/MIKTEX_GIT_COMMIT_ABBREV are only set
+        # inside that isolated -P script invocation, not here).
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} show --no-patch --pretty=%h
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            OUTPUT_VARIABLE miktex_macos_bundle_git_commit_abbrev
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(miktex_macos_bundle_git_commit_abbrev)
+            string(APPEND miktex_macos_bundle_short_version_string "+${miktex_macos_bundle_git_commit_abbrev}")
+        endif()
+    endif()
     set_target_properties(${MIKTEX_PROG_NAME_CONSOLE}
         PROPERTIES
         OUTPUT_NAME ${MIKTEX_MACOS_BUNDLE_NAME}
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in"
         MACOSX_BUNDLE_BUNDLE_NAME ${MIKTEX_MACOS_BUNDLE_NAME}
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "${MIKTEX_MAJOR_VERSION}.${MIKTEX_MINOR_VERSION}.${MIKTEX_PATCH_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${miktex_macos_bundle_short_version_string}"
         MACOSX_BUNDLE_GUI_IDENTIFIER "org.miktex.console"
     )
 endif()
