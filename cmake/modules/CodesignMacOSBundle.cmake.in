@@ -6,24 +6,46 @@
 ## unlimited permission to copy and/or distribute it, with or
 ## without modifications, as long as this notice is preserved.
 
-## fixup_bundle()'s install_name_tool calls (in Programs/MiKTeX/Console/Qt/CMakeLists.txt)
-## invalidate whatever signature each copied dylib/framework had, and every
-## other install() rule across the project that lands files inside the .app
-## after that runs the same way. On Apple Silicon this is fatal at launch
-## (SIGKILL / CODESIGNING / Invalid Page), not cosmetic like it is on x86_64,
-## where unsigned code just runs. This must sign the bundle only after every
-## install() rule in the whole project has finished adding files to it, or
-## the seal is stale before packaging even starts -- hence CPACK_PRE_BUILD_SCRIPTS
-## (runs once the staging directory is fully populated, right before CPack
-## creates the .dmg) rather than an install(CODE ...) in any one subdirectory.
+## fixup_bundle() (in Programs/MiKTeX/Console/Qt/CMakeLists.txt) runs
+## install_name_tool on every dylib/framework it copies into the .app, which
+## invalidates each one's code signature. On Apple Silicon that is fatal, not
+## cosmetic like on x86_64: dyld validates every Mach-O's own signature as it
+## maps it, and the kernel kills the process (SIGKILL / CODESIGNING / Invalid
+## Page) on the first bad page. So the whole bundle must be re-signed.
 ##
-## This is separate from (and does not replace) WITH_CODE_SIGNING, which only
-## signs the outer .dmg with a real Developer ID identity.
+## This runs from CPACK_PRE_BUILD_SCRIPTS -- i.e. once every install() rule in
+## the project has finished populating the staging tree, right before CPack
+## builds the .dmg. An install(CODE ...) in any single subdirectory runs too
+## early: later subdirectories add more files to the .app and would leave the
+## seal stale.
+##
+## Do NOT sign with `codesign --deep`. --deep only discovers code in
+## Apple-standard nested locations (Contents/Frameworks, Contents/PlugIns) and
+## seals loose dylibs -- e.g. those MiKTeX puts in Contents/miktex-lib -- merely
+## as resources, so their own embedded Mach-O signatures stay broken.
+## `codesign --verify --deep` is fooled the exact same way and reports success,
+## but dyld is not: it still validates each dylib's own signature at load time.
+## The only robust fix is to sign inside-out -- every Mach-O individually, then
+## the bundle itself last (which re-seals CodeResources over the now-valid
+## contents). This is also Apple's documented guidance.
+##
+## This is separate from (and does not replace) WITH_CODE_SIGNING, which signs
+## the outer .dmg with a real Developer ID identity.
 
 set(bundle_root "${CPACK_TEMPORARY_INSTALL_DIRECTORY}/@MIKTEX_MACOS_BUNDLE_NAME@.app")
 
+# Contents/texmf is pure data (no Mach-O); excluding it keeps the per-file
+# `file` probe from walking thousands of tfm/sty/etc. files.
 execute_process(
-    COMMAND codesign --force --deep --sign - "${bundle_root}"
+    COMMAND bash -c "set -euo pipefail; \
+        bundle=\"$1\"; \
+        find \"$bundle\" -type f -not -path '*/Contents/texmf/*' -print0 \
+        | while IFS= read -r -d '' f; do \
+            if file \"$f\" | grep -q 'Mach-O'; then \
+                codesign --force --sign - \"$f\"; \
+            fi; \
+        done; \
+        codesign --force --sign - \"$bundle\"" _ "${bundle_root}"
     RESULT_VARIABLE codesign_result
     ERROR_VARIABLE codesign_error
 )
