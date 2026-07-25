@@ -124,10 +124,23 @@ set_property(TARGET ${MIKTEX_PREFIX}hitex PROPERTY FOLDER ${MIKTEX_CURRENT_FOLDE
 target_link_libraries(${MIKTEX_PREFIX}hitex
     ${app_dll_name}
     ${core_dll_name}
-    ${harfbuzz_dll_name}
     ${kpsemu_dll_name}
     ${w2cemu_dll_name}
 )
+
+# hitex.c includes <hb.h>. ${harfbuzz_dll_name} only names the bundled
+# harfbuzz target, which exists (and carries its include directories) only
+# when USE_SYSTEM_HARFBUZZ is OFF -- the macOS bundle case. With a system
+# harfbuzz (the default on Unix-alikes) that target is never created, so no
+# include directory was propagated and the build failed with
+# "fatal error: hb.h: No such file or directory". Link the imported target
+# instead, which carries INTERFACE_INCLUDE_DIRECTORIES; this mirrors what
+# xetex already does.
+if(USE_SYSTEM_HARFBUZZ)
+    target_link_libraries(${MIKTEX_PREFIX}hitex MiKTeX::Imported::HARFBUZZ)
+else()
+    target_link_libraries(${MIKTEX_PREFIX}hitex ${harfbuzz_dll_name})
+endif()
 
 if(USE_SYSTEM_FMT)
     target_link_libraries(${MIKTEX_PREFIX}hitex MiKTeX::Imported::FMT)
