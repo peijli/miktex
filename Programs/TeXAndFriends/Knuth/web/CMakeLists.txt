@@ -18,7 +18,7 @@ set(MIKTEX_CURRENT_FOLDER "${MIKTEX_IDE_KNUTH_FOLDER}/web")
 # and tangle writes every byte of tangle.p with 0x80 set, which then fails
 # to parse ("parse error before `?'").
 if(NOT MSVC)
-    add_compile_options(-fsigned-char)
+    add_compile_options(-fsigned-char -O0)
 endif()
 
 include_directories(BEFORE
