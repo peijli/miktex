@@ -1219,6 +1219,9 @@ endif()
 
 if(USE_SYSTEM_HARFBUZZ)
     find_package(HARFBUZZ REQUIRED)
+    # hitex calls hb_subset_*(), which system HarfBuzz keeps in a separate
+    # library (the bundled copy compiles it into miktex-harfbuzz instead).
+    find_package(HARFBUZZ_SUBSET REQUIRED)
 endif()
 
 if(USE_SYSTEM_HARFBUZZ_ICU)
@@ -1904,6 +1907,17 @@ if(USE_SYSTEM_HARFBUZZ)
         PROPERTIES
         IMPORTED_LOCATION "${HARFBUZZ_LIBRARY}"
         INTERFACE_INCLUDE_DIRECTORIES "${HARFBUZZ_INCLUDE_DIRS}"
+    )
+    get_filename_component(suffix ${HARFBUZZ_SUBSET_LIBRARY} EXT)
+    if (suffix STREQUAL CMAKE_SHARED_LIBRARY_SUFFIX)
+        add_library(MiKTeX::Imported::HARFBUZZ_SUBSET SHARED IMPORTED)
+    else()
+        add_library(MiKTeX::Imported::HARFBUZZ_SUBSET STATIC IMPORTED)
+    endif()
+    set_target_properties(MiKTeX::Imported::HARFBUZZ_SUBSET
+        PROPERTIES
+        IMPORTED_LOCATION "${HARFBUZZ_SUBSET_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${HARFBUZZ_SUBSET_INCLUDE_DIRS}"
     )
 else()
     add_subdirectory(${MIKTEX_REL_HARFBUZZ_DIR})

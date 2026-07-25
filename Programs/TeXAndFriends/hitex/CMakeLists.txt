@@ -137,7 +137,11 @@ target_link_libraries(${MIKTEX_PREFIX}hitex
 # instead, which carries INTERFACE_INCLUDE_DIRECTORIES; this mirrors what
 # xetex already does.
 if(USE_SYSTEM_HARFBUZZ)
+    # hitex.w calls hb_subset_*(), which lives in a separate library for a
+    # system HarfBuzz; the bundled harfbuzz compiles hb-subset-*.cc straight
+    # into ${harfbuzz_dll_name}, so no extra library is needed there.
     target_link_libraries(${MIKTEX_PREFIX}hitex MiKTeX::Imported::HARFBUZZ)
+    target_link_libraries(${MIKTEX_PREFIX}hitex MiKTeX::Imported::HARFBUZZ_SUBSET)
 else()
     target_link_libraries(${MIKTEX_PREFIX}hitex ${harfbuzz_dll_name})
 endif()
