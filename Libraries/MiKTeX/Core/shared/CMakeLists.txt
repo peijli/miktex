@@ -125,7 +125,8 @@ if(MIKTEX_NATIVE_WINDOWS)
     endif()
 endif()
 
-if(MIKTEX_MACOS_BUNDLE)
+# FileSystemWatcher/mac uses FSEvents, which is compiled for every APPLE build.
+if(APPLE)
     target_link_libraries(${core_dll_name}
         PRIVATE
             "-framework CoreServices"

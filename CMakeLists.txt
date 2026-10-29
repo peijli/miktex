@@ -23,13 +23,18 @@ set(CMAKE_LINK_DEPENDS_NO_SHARED 1)
 if(APPLE)
     # CMAKE_(HOST_)SYSTEM_PROCESSOR is not yet populated this early (before
     # project()/enable_language()), but CMAKE_OSX_DEPLOYMENT_TARGET must be
-    # set before project() to take effect, so query the host arch directly.
-    execute_process(
-        COMMAND uname -m
-        OUTPUT_VARIABLE miktex_apple_host_arch
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    if(miktex_apple_host_arch MATCHES "(arm64|aarch64)")
+    # set before project() to take effect. Use the requested target
+    # architectures if given (cross or universal builds), else the host arch.
+    if(CMAKE_OSX_ARCHITECTURES)
+        set(miktex_apple_target_arch "${CMAKE_OSX_ARCHITECTURES}")
+    else()
+        execute_process(
+            COMMAND uname -m
+            OUTPUT_VARIABLE miktex_apple_target_arch
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+    endif()
+    if(miktex_apple_target_arch MATCHES "(arm64|aarch64)")
         set(default_osx_deployment_target "11.0")
     else()
         set(default_osx_deployment_target "10.12")
@@ -140,6 +145,15 @@ if(MIKTEX_NATIVE_WINDOWS)
         set(MIKTEX_TARGET_SYSTEM_CPU "arm64")
         set(MIKTEX_MANIFEST_PROCESSOR_ARCHITECTURE "arm64")
     endif()
+elseif(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    # On macOS, CMAKE_SYSTEM_PROCESSOR is the host arch, which is wrong when
+    # cross-compiling (e.g. x86_64 on Apple Silicon) or building universal.
+    list(LENGTH CMAKE_OSX_ARCHITECTURES miktex_osx_architectures_count)
+    if(miktex_osx_architectures_count EQUAL 1)
+        string(TOLOWER "${CMAKE_OSX_ARCHITECTURES}" MIKTEX_TARGET_SYSTEM_CPU)
+    else()
+        set(MIKTEX_TARGET_SYSTEM_CPU "universal")
+    endif()
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "i.86")
     set(MIKTEX_TARGET_SYSTEM_CPU "x86")
 else()
@@ -164,8 +178,8 @@ endif()
 ###############################################################################
 ## macOS: bundle vs Homebrew detection
 
-string(SUBSTRING ${CMAKE_INSTALL_PREFIX} 0 17 homebrew_cellar)
-if(homebrew_cellar STREQUAL "/usr/local/Cellar")
+# Intel Homebrew uses /usr/local/Cellar, Apple Silicon Homebrew /opt/homebrew/Cellar.
+if(CMAKE_INSTALL_PREFIX MATCHES "^(/usr/local|/opt/homebrew)/Cellar/")
     set(MIKTEX_HOMEBREW TRUE)
 endif()
 
@@ -2419,6 +2433,32 @@ if(WITH_BOOTSTRAPPING)
 endif()
 
 ###############################################################################
+## code signing (macOS)
+
+# Sign the .app once every other install() rule in the project has finished
+# populating it. Install rules run in declaration order (CMP0082), so this
+# must stay the last install() rule; it runs for both `cmake --install` and
+# CPack's staging install. See CodesignMacOSBundle.cmake.in for why signing
+# from inside a subdirectory (e.g. next to fixup_bundle) is too early.
+if(MIKTEX_MACOS_BUNDLE)
+    if(WITH_CODE_SIGNING)
+        # Developer ID identity, hardened runtime and per-file entitlements;
+        # codesign_miktex is configured in Programs/MiKTeX/Console/Qt.
+        install(CODE
+            "execute_process(COMMAND \"${CMAKE_BINARY_DIR}/BuildUtilities/sign/mac/codesign_miktex\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${MIKTEX_MACOS_BUNDLE_NAME}.app\")"
+        )
+    else()
+        # Ad-hoc signature, required for the bundle to launch on Apple Silicon.
+        configure_file(
+            cmake/modules/CodesignMacOSBundle.cmake.in
+            "${CMAKE_BINARY_DIR}/CodesignMacOSBundle.cmake"
+            @ONLY
+        )
+        install(SCRIPT "${CMAKE_BINARY_DIR}/CodesignMacOSBundle.cmake")
+    endif()
+endif()
+
+###############################################################################
 ## packaging
 
 find_program(RPMBUILD_EXECUTABLE NAMES rpmbuild)
@@ -2590,20 +2630,6 @@ set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
 )
 
 set(CPACK_STRIP_SYMBOLS TRUE)
-
-if(MIKTEX_MACOS_BUNDLE)
-    # Ad-hoc re-sign the .app once every install() rule in the project has
-    # finished populating it (CPACK_PRE_BUILD_SCRIPTS runs after staging,
-    # right before packaging) -- see CodesignMacOSBundle.cmake.in for why
-    # this can't be done earlier, e.g. from inside fixup_bundle's own
-    # install(CODE ...) block.
-    configure_file(
-        cmake/modules/CodesignMacOSBundle.cmake.in
-        "${CMAKE_BINARY_DIR}/CodesignMacOSBundle.cmake"
-        @ONLY
-    )
-    list(APPEND CPACK_PRE_BUILD_SCRIPTS "${CMAKE_BINARY_DIR}/CodesignMacOSBundle.cmake")
-endif()
 
 include(CPack)
 

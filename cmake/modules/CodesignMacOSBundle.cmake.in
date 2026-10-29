@@ -13,11 +13,12 @@
 ## maps it, and the kernel kills the process (SIGKILL / CODESIGNING / Invalid
 ## Page) on the first bad page. So the whole bundle must be re-signed.
 ##
-## This runs from CPACK_PRE_BUILD_SCRIPTS -- i.e. once every install() rule in
-## the project has finished populating the staging tree, right before CPack
-## builds the .dmg. An install(CODE ...) in any single subdirectory runs too
-## early: later subdirectories add more files to the .app and would leave the
-## seal stale.
+## This runs as the last install() rule of the top-level CMakeLists.txt --
+## i.e. once every other install() rule in the project has finished populating
+## the .app, for both `cmake --install` and CPack's staging install. An
+## install(CODE ...) in any single subdirectory runs too early: later rules
+## (e.g. the top-level qt.conf installs) add more files to the .app and would
+## leave the seal stale.
 ##
 ## Do NOT sign with `codesign --deep`. --deep only discovers code in
 ## Apple-standard nested locations (Contents/Frameworks, Contents/PlugIns) and
@@ -29,23 +30,33 @@
 ## the bundle itself last (which re-seals CodeResources over the now-valid
 ## contents). This is also Apple's documented guidance.
 ##
-## This is separate from (and does not replace) WITH_CODE_SIGNING, which signs
-## the outer .dmg with a real Developer ID identity.
+## This script is only used when WITH_CODE_SIGNING is OFF. With
+## WITH_CODE_SIGNING ON, codesign_miktex signs the same files with the real
+## Developer ID identity, the hardened runtime and per-file entitlements
+## instead; signing ad hoc afterwards would replace those signatures.
 
-set(bundle_root "${CPACK_TEMPORARY_INSTALL_DIRECTORY}/@MIKTEX_MACOS_BUNDLE_NAME@.app")
+set(bundle_root "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@MIKTEX_MACOS_BUNDLE_NAME@.app")
+
+message(STATUS "Ad-hoc signing: ${bundle_root}")
 
 # Contents/texmf is pure data (no Mach-O); excluding it keeps the per-file
-# `file` probe from walking thousands of tfm/sty/etc. files.
+# `file` probe from walking thousands of tfm/sty/etc. files. The bundle's main
+# executable is skipped as well: codesign treats it as the bundle itself, and
+# the final bundle signature covers it.
 execute_process(
     COMMAND bash -c "set -euo pipefail; \
         bundle=\"$1\"; \
+        main_exe=\"$bundle/Contents/MacOS/$2\"; \
         find \"$bundle\" -type f -not -path '*/Contents/texmf/*' -print0 \
         | while IFS= read -r -d '' f; do \
-            if file \"$f\" | grep -q 'Mach-O'; then \
-                codesign --force --sign - \"$f\"; \
+            if [ \"$f\" = \"$main_exe\" ]; then \
+                continue; \
             fi; \
+            case \"$(file -b \"$f\")\" in \
+                *Mach-O*) codesign --force --sign - \"$f\" ;; \
+            esac; \
         done; \
-        codesign --force --sign - \"$bundle\"" _ "${bundle_root}"
+        codesign --force --sign - \"$bundle\"" _ "${bundle_root}" "@MIKTEX_MACOS_BUNDLE_NAME@"
     RESULT_VARIABLE codesign_result
     ERROR_VARIABLE codesign_error
 )
