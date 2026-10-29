@@ -63,6 +63,17 @@ static string get_libttfautohint () {
 	DLLoader loader(dlname);
 	if (!loader.loaded())
 		dlname = "libttfautohint.1.dylib";
+#if defined(MIKTEX)
+	// a bare name is not searched for in Apple Silicon Homebrew's /opt/homebrew/lib
+	if (!loader.loaded() && !loader.loadLibrary(dlname)) {
+		for (const string path : {"/usr/local/lib/", "/opt/homebrew/lib/"}) {
+			if (loader.loadLibrary(path + dlname)) {
+				dlname = path + dlname;
+				break;
+			}
+		}
+	}
+#endif
 #endif
 	return dlname;
 #endif // _WIN32
