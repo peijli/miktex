@@ -8,6 +8,19 @@
 
 set(MIKTEX_CURRENT_FOLDER "${MIKTEX_IDE_KNUTH_FOLDER}/web")
 
+# The pre-tangled bootstrap source init/inittangle.p (and the tangle.p it
+# generates) initialize the xord[] translation table over the full *signed*
+# char range:
+#     for i:=-128 to 127 do xord[chr(i)]:=32;
+# That assumes char is signed, which holds on x86/x86_64 and on Apple's
+# arm64 (which keeps char signed by convention), but not on AArch64 Linux,
+# where the ARM64 ABI makes char unsigned. There the table comes out wrong
+# and tangle writes every byte of tangle.p with 0x80 set, which then fails
+# to parse ("parse error before `?'").
+if(NOT MSVC)
+    add_compile_options(-fsigned-char)
+endif()
+
 include_directories(BEFORE
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}

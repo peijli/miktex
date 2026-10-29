@@ -146,7 +146,12 @@ static string get_libgs (const string &fname) {
 #if defined(__APPLE__)
 		// dlopen() requires an absolute path in a hardened runtime such as installed
 		// by MacTeX. Thus, explicitly lookup libgs in /usr/local/lib too.
+#if defined(MIKTEX)
+		// Apple Silicon Homebrew installs into /opt/homebrew instead of /usr/local.
+		for (const string path : {"", "/usr/local/lib/", "/opt/homebrew/lib/"}) {
+#else
 		for (const string path : {"", "/usr/local/lib/"}) {
+#endif
 			dlname = path + "libgs." + to_string(i) + ".dylib";
 			if (loader.loadLibrary(dlname))
 				return dlname;

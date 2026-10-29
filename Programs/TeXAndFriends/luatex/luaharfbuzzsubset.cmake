@@ -24,6 +24,12 @@ endif()
 if(USE_SYSTEM_HARFBUZZ_ICU)
     target_link_libraries(luahbtex-luaharfbuzzsubset-objects PUBLIC MiKTeX::Imported::HARFBUZZ_ICU)
     target_link_libraries(luahbtex-luaharfbuzzsubset-objects PUBLIC MiKTeX::Imported::HARFBUZZ)
+    # These sources call hb_subset_*(), which a system HarfBuzz keeps in a
+    # separate library; the bundled harfbuzz compiles hb-subset-*.cc straight
+    # into ${harfbuzz_dll_name}, so the else() branch needs nothing extra.
+    if(TARGET MiKTeX::Imported::HARFBUZZ_SUBSET)
+        target_link_libraries(luahbtex-luaharfbuzzsubset-objects PUBLIC MiKTeX::Imported::HARFBUZZ_SUBSET)
+    endif()
 else()
     target_link_libraries(luahbtex-luaharfbuzzsubset-objects PUBLIC ${harfbuzz_dll_name})
 endif()

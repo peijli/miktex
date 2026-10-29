@@ -21,8 +21,26 @@ set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules")
 set(CMAKE_LINK_DEPENDS_NO_SHARED 1)
 
 if(APPLE)
+    # CMAKE_(HOST_)SYSTEM_PROCESSOR is not yet populated this early (before
+    # project()/enable_language()), but CMAKE_OSX_DEPLOYMENT_TARGET must be
+    # set before project() to take effect. Use the requested target
+    # architectures if given (cross or universal builds), else the host arch.
+    if(CMAKE_OSX_ARCHITECTURES)
+        set(miktex_apple_target_arch "${CMAKE_OSX_ARCHITECTURES}")
+    else()
+        execute_process(
+            COMMAND uname -m
+            OUTPUT_VARIABLE miktex_apple_target_arch
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+    endif()
+    if(miktex_apple_target_arch MATCHES "(arm64|aarch64)")
+        set(default_osx_deployment_target "11.0")
+    else()
+        set(default_osx_deployment_target "10.12")
+    endif()
     set(CMAKE_OSX_DEPLOYMENT_TARGET
-        "10.12"
+        "${default_osx_deployment_target}"
         CACHE STRING
         "The earliest version of MacOS X that MiKTeX will run on."
     )
@@ -120,12 +138,35 @@ else()
 endif()
 
 if(MIKTEX_NATIVE_WINDOWS)
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64")
+    # CMAKE_SYSTEM_PROCESSOR is the host CPU unless CMAKE_SYSTEM_NAME is set,
+    # so it is wrong for e.g. `-A ARM64` or an ARM64 cl.exe on an x64 host.
+    # Ask the compiler which architecture it targets instead; fall back to
+    # the Visual Studio platform (-A) and then to CMAKE_SYSTEM_PROCESSOR.
+    if(CMAKE_C_COMPILER_ARCHITECTURE_ID)
+        set(miktex_windows_target_arch "${CMAKE_C_COMPILER_ARCHITECTURE_ID}")
+    elseif(CMAKE_GENERATOR_PLATFORM)
+        set(miktex_windows_target_arch "${CMAKE_GENERATOR_PLATFORM}")
+    else()
+        set(miktex_windows_target_arch "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    string(TOLOWER "${miktex_windows_target_arch}" miktex_windows_target_arch)
+    if(miktex_windows_target_arch MATCHES "^(x64|amd64|x86_64)$")
         set(MIKTEX_TARGET_SYSTEM_CPU "x64")
         set(MIKTEX_MANIFEST_PROCESSOR_ARCHITECTURE "amd64")
-    else()
+    elseif(miktex_windows_target_arch MATCHES "^(arm64|aarch64)$")
         set(MIKTEX_TARGET_SYSTEM_CPU "arm64")
         set(MIKTEX_MANIFEST_PROCESSOR_ARCHITECTURE "arm64")
+    else()
+        message(FATAL_ERROR "Unsupported Windows target architecture \"${miktex_windows_target_arch}\": only x64 and arm64 are supported.")
+    endif()
+elseif(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    # On macOS, CMAKE_SYSTEM_PROCESSOR is the host arch, which is wrong when
+    # cross-compiling (e.g. x86_64 on Apple Silicon) or building universal.
+    list(LENGTH CMAKE_OSX_ARCHITECTURES miktex_osx_architectures_count)
+    if(miktex_osx_architectures_count EQUAL 1)
+        string(TOLOWER "${CMAKE_OSX_ARCHITECTURES}" MIKTEX_TARGET_SYSTEM_CPU)
+    else()
+        set(MIKTEX_TARGET_SYSTEM_CPU "universal")
     endif()
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "i.86")
     set(MIKTEX_TARGET_SYSTEM_CPU "x86")
@@ -151,8 +192,8 @@ endif()
 ###############################################################################
 ## macOS: bundle vs Homebrew detection
 
-string(SUBSTRING ${CMAKE_INSTALL_PREFIX} 0 17 homebrew_cellar)
-if(homebrew_cellar STREQUAL "/usr/local/Cellar")
+# Intel Homebrew uses /usr/local/Cellar, Apple Silicon Homebrew /opt/homebrew/Cellar.
+if(CMAKE_INSTALL_PREFIX MATCHES "^(/usr/local|/opt/homebrew)/Cellar/")
     set(MIKTEX_HOMEBREW TRUE)
 endif()
 
@@ -1205,6 +1246,9 @@ endif()
 
 if(USE_SYSTEM_HARFBUZZ)
     find_package(HARFBUZZ REQUIRED)
+    # hitex calls hb_subset_*(), which system HarfBuzz keeps in a separate
+    # library (the bundled copy compiles it into miktex-harfbuzz instead).
+    find_package(HARFBUZZ_SUBSET REQUIRED)
 endif()
 
 if(USE_SYSTEM_HARFBUZZ_ICU)
@@ -1304,6 +1348,7 @@ check_function_exists(chown HAVE_CHOWN)
 check_function_exists(closedir HAVE_CLOSEDIR)
 check_function_exists(confstr HAVE_CONFSTR)
 check_function_exists(ctime HAVE_CTIME)
+check_function_exists(ctime_r HAVE_CTIME_R)
 check_function_exists(finite HAVE_FINITE)
 check_function_exists(fork HAVE_FORK)
 check_function_exists(fseeko64 HAVE_FSEEKO64)
@@ -1890,6 +1935,17 @@ if(USE_SYSTEM_HARFBUZZ)
         IMPORTED_LOCATION "${HARFBUZZ_LIBRARY}"
         INTERFACE_INCLUDE_DIRECTORIES "${HARFBUZZ_INCLUDE_DIRS}"
     )
+    get_filename_component(suffix ${HARFBUZZ_SUBSET_LIBRARY} EXT)
+    if (suffix STREQUAL CMAKE_SHARED_LIBRARY_SUFFIX)
+        add_library(MiKTeX::Imported::HARFBUZZ_SUBSET SHARED IMPORTED)
+    else()
+        add_library(MiKTeX::Imported::HARFBUZZ_SUBSET STATIC IMPORTED)
+    endif()
+    set_target_properties(MiKTeX::Imported::HARFBUZZ_SUBSET
+        PROPERTIES
+        IMPORTED_LOCATION "${HARFBUZZ_SUBSET_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${HARFBUZZ_SUBSET_INCLUDE_DIRS}"
+    )
 else()
     add_subdirectory(${MIKTEX_REL_HARFBUZZ_DIR})
 endif()
@@ -2388,6 +2444,32 @@ if(WITH_BOOTSTRAPPING)
         DESTINATION
             ${MIKTEX_BOOTSTRAPPING_DESTINATION_DIR}
     )
+endif()
+
+###############################################################################
+## code signing (macOS)
+
+# Sign the .app once every other install() rule in the project has finished
+# populating it. Install rules run in declaration order (CMP0082), so this
+# must stay the last install() rule; it runs for both `cmake --install` and
+# CPack's staging install. See CodesignMacOSBundle.cmake.in for why signing
+# from inside a subdirectory (e.g. next to fixup_bundle) is too early.
+if(MIKTEX_MACOS_BUNDLE)
+    if(WITH_CODE_SIGNING)
+        # Developer ID identity, hardened runtime and per-file entitlements;
+        # codesign_miktex is configured in Programs/MiKTeX/Console/Qt.
+        install(CODE
+            "execute_process(COMMAND \"${CMAKE_BINARY_DIR}/BuildUtilities/sign/mac/codesign_miktex\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${MIKTEX_MACOS_BUNDLE_NAME}.app\")"
+        )
+    else()
+        # Ad-hoc signature, required for the bundle to launch on Apple Silicon.
+        configure_file(
+            cmake/modules/CodesignMacOSBundle.cmake.in
+            "${CMAKE_BINARY_DIR}/CodesignMacOSBundle.cmake"
+            @ONLY
+        )
+        install(SCRIPT "${CMAKE_BINARY_DIR}/CodesignMacOSBundle.cmake")
+    endif()
 endif()
 
 ###############################################################################

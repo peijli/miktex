@@ -210,18 +210,53 @@ if(MIKTEX_MACOS_BUNDLE)
     get_property(_Qt${QT_SERIES}_Core_LOCATION TARGET Qt${QT_SERIES}::Core PROPERTY LOCATION)
     get_filename_component(Qt_BIN_DIR "${_Qt${QT_SERIES}_Core_LOCATION}" PATH)
     get_filename_component(Qt_BIN_DIR "${Qt_BIN_DIR}" PATH)
+    # Homebrew's Qt6 on macOS ships QtCore as a .framework bundle
+    # (.../lib/QtCore.framework/Versions/A/QtCore), so the two path strips
+    # above only reach ".../QtCore.framework/Versions". Two more are needed
+    # to reach the actual containing lib dir that fixup_bundle must search.
+    if(Qt_BIN_DIR MATCHES "\\.framework")
+        get_filename_component(Qt_BIN_DIR "${Qt_BIN_DIR}" PATH)
+        get_filename_component(Qt_BIN_DIR "${Qt_BIN_DIR}" PATH)
+    endif()
 endif()
 
 add_executable(${MIKTEX_PROG_NAME_CONSOLE} WIN32 MACOSX_BUNDLE ${sources})
 set_property(TARGET ${MIKTEX_PROG_NAME_CONSOLE} PROPERTY FOLDER ${MIKTEX_CURRENT_FOLDER})
 target_link_libraries(${MIKTEX_PROG_NAME_CONSOLE} ${libs})  
 if(MIKTEX_MACOS_BUNDLE)
+    # CFBundleShortVersionString and CFBundleVersion must be plain
+    # period-separated integers, so the commit hash goes into the long
+    # version and Get Info strings instead.
+    set(miktex_macos_bundle_version "${MIKTEX_MAJOR_VERSION}.${MIKTEX_MINOR_VERSION}.${MIKTEX_PATCH_VERSION}")
+    set(miktex_macos_bundle_long_version_string "${miktex_macos_bundle_version}")
+    # .git is a file, not a directory, in a git worktree.
+    if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+        # Matches the "{version}+{commitAbbrev}" build-metadata convention
+        # miktexsetup.cpp already uses for Utils::GetGitInfo() (see
+        # gen-git-info.cmake); makes it possible to tell which exact commit a
+        # given .app was built from, without needing GitInfo.h's separate
+        # build-time script (MIKTEX_HAVE_GIT_INFO/MIKTEX_GIT_COMMIT_ABBREV are
+        # only set inside that isolated -P script invocation, not here).
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} show --no-patch --pretty=%h
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            OUTPUT_VARIABLE miktex_macos_bundle_git_commit_abbrev
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(miktex_macos_bundle_git_commit_abbrev)
+            string(APPEND miktex_macos_bundle_long_version_string "+${miktex_macos_bundle_git_commit_abbrev}")
+        endif()
+    endif()
     set_target_properties(${MIKTEX_PROG_NAME_CONSOLE}
         PROPERTIES
         OUTPUT_NAME ${MIKTEX_MACOS_BUNDLE_NAME}
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in"
         MACOSX_BUNDLE_BUNDLE_NAME ${MIKTEX_MACOS_BUNDLE_NAME}
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "${MIKTEX_MAJOR_VERSION}.${MIKTEX_MINOR_VERSION}.${MIKTEX_PATCH_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${miktex_macos_bundle_version}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${miktex_macos_bundle_version}"
+        MACOSX_BUNDLE_LONG_VERSION_STRING "${miktex_macos_bundle_long_version_string}"
+        MACOSX_BUNDLE_INFO_STRING "${MIKTEX_MACOS_BUNDLE_NAME} ${miktex_macos_bundle_long_version_string}"
         MACOSX_BUNDLE_GUI_IDENTIFIER "org.miktex.console"
     )
 endif()
@@ -256,10 +291,33 @@ install(TARGETS miktex-console
 # stibizt: https://github.com/Kitware/CMake/blob/master/Source/QtDialog/CMakeLists.txt
 if(MIKTEX_MACOS_BUNDLE)
     set(fixup_exe "\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${MIKTEX_MACOS_BUNDLE_DIR}/MacOS/${MIKTEX_MACOS_BUNDLE_NAME}")
-    # FIXME: non-standard icu lib dir
-    list(APPEND lib_dirs "/usr/local/opt/poppler-qt5/lib")
-    # FIXME: non-standard poppler-qt5 lib dir
-    list(APPEND lib_dirs "/usr/local/opt/icu4c/lib")
+    # /opt/homebrew/bin (Apple Silicon) is not on the default PATH, unlike
+    # /usr/local/bin (Intel), e.g. in IDE or CI shells without `brew shellenv`.
+    find_program(MIKTEX_BREW_EXECUTABLE brew HINTS /opt/homebrew/bin /usr/local/bin)
+    if(MIKTEX_BREW_EXECUTABLE)
+        execute_process(
+            COMMAND ${MIKTEX_BREW_EXECUTABLE} --prefix
+            OUTPUT_VARIABLE homebrew_prefix
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+    endif()
+    if(NOT homebrew_prefix AND DEFINED ENV{HOMEBREW_PREFIX})
+        set(homebrew_prefix "$ENV{HOMEBREW_PREFIX}")
+    endif()
+    if(homebrew_prefix)
+        # These used to be hardcoded to /usr/local/opt/... (Intel Homebrew's
+        # prefix), which silently never matched on Apple Silicon (/opt/homebrew).
+        # FIXME: non-standard poppler-qt5 lib dir
+        list(APPEND lib_dirs "${homebrew_prefix}/opt/poppler-qt5/lib")
+        # FIXME: non-standard icu lib dir
+        list(APPEND lib_dirs "${homebrew_prefix}/opt/icu4c/lib")
+        # Homebrew symlinks most (non-keg-only) libraries here. Some Qt
+        # dependencies (e.g. brotli) reference siblings via @rpath with a
+        # nested @loader_path-relative rpath that fixup_bundle doesn't
+        # reliably chase through, so give it this directory explicitly.
+        list(APPEND lib_dirs "${homebrew_prefix}/lib")
+    endif()
     list(APPEND lib_dirs "\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${MIKTEX_LIBRARY_DESTINATION_DIR}")
     install(CODE "
         include(${CMAKE_SOURCE_DIR}/cmake/modules/BundleUtilitiesOverrides.cmake)
@@ -308,7 +366,6 @@ if(MIKTEX_MACOS_BUNDLE AND WITH_CODE_SIGNING)
         FILE_PERMISSIONS
             OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
     )
-    install(CODE
-        "execute_process(COMMAND \"${CMAKE_BINARY_DIR}/BuildUtilities/sign/mac/codesign_miktex\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${MIKTEX_MACOS_BUNDLE_NAME}.app\")"
-    )
+    # The install(CODE ...) that runs codesign_miktex lives at the end of the
+    # top-level CMakeLists.txt, so that it signs the fully populated bundle.
 endif()
