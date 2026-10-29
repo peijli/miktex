@@ -28,6 +28,12 @@ add_definitions(
     -DPNG_NO_CONFIG_H
 )
 
+# Compilers targeting arm64 define __ARM_NEON, which makes libpng require its
+# NEON filter functions; their arm/ sources are not part of this build.
+add_definitions(
+    -DPNG_ARM_NEON_OPT=0
+)
+
 configure_file(
     source/scripts/pnglibconf.h.prebuilt
     ${CMAKE_CURRENT_BINARY_DIR}/include/pnglibconf.h

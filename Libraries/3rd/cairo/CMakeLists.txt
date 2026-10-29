@@ -19,6 +19,13 @@ set(HAS_PIXMAN_GLYPHS TRUE)
 
 set(HAVE_UINT64_T TRUE)
 
+# Without an atomics backend cairo falls back to a mutex for updates but
+# plain, unordered loads for reads, which is not safe on weakly ordered CPUs
+# such as arm64. GCC and Clang provide the __sync builtins on all targets.
+if(NOT MSVC)
+    set(HAVE_GCC_LEGACY_ATOMICS TRUE)
+endif()
+
 set(CAIRO_HAS_DWRITE_FONT ${MIKTEX_NATIVE_WINDOWS})
 set(CAIRO_HAS_FC_FONT TRUE)
 set(CAIRO_HAS_FT_FONT TRUE)

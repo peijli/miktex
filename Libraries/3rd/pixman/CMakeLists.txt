@@ -57,8 +57,6 @@ set(pixman_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/source/pixman/pixman-utils.c
 
     ${CMAKE_CURRENT_SOURCE_DIR}/source/pixman/pixman-mmx.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/pixman/pixman-sse2.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/pixman/pixman-ssse3.c
 
     ${CMAKE_CURRENT_SOURCE_DIR}/source/pixman/dither/blue-noise-64x64.h
     ${CMAKE_CURRENT_SOURCE_DIR}/source/pixman/pixman-accessor.h
@@ -74,6 +72,22 @@ configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/source/pixman/pixman-version.h.in
     ${CMAKE_CURRENT_BINARY_DIR}/include/pixman-version.h
 )
+
+# The SSE2/SSSE3 fast paths use x86 intrinsics and must not be built for
+# other CPUs such as arm64. SSE2 is part of the x86_64 baseline; GCC and Clang
+# need -mssse3 for SSSE3, so only MSVC builds that one.
+if(MIKTEX_TARGET_SYSTEM_CPU MATCHES "^(x64|x86_64|amd64)$" OR (MSVC AND MIKTEX_TARGET_SYSTEM_CPU STREQUAL "x86"))
+    set(USE_SSE2 TRUE)
+    list(APPEND pixman_sources
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/pixman/pixman-sse2.c
+    )
+    if(MSVC)
+        set(USE_SSSE3 TRUE)
+        list(APPEND pixman_sources
+            ${CMAKE_CURRENT_SOURCE_DIR}/source/pixman/pixman-ssse3.c
+        )
+    endif()
+endif()
 
 configure_file(
     pixman-config.h.cmake

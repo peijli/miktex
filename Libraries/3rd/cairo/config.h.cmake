@@ -16,6 +16,8 @@
 
 #cmakedefine HAVE_FENV_H 1
 
+#cmakedefine HAVE_GCC_LEGACY_ATOMICS 1
+
 #cmakedefine HAVE_INTSAFE_H 1
 
 #cmakedefine HAVE_INTTYPES_H 1
