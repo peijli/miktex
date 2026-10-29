@@ -77,7 +77,8 @@ set(mpm_ps_sources
   ${generated_mpm_ps_sources}
 )
 
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64")
+# MIDL target environment, matching MIKTEX_TARGET_SYSTEM_CPU (x64 or arm64)
+if(MIKTEX_TARGET_SYSTEM_CPU STREQUAL "x64")
   set(env "amd64")
 else()
   set(env "arm64")

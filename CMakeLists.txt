@@ -138,12 +138,26 @@ else()
 endif()
 
 if(MIKTEX_NATIVE_WINDOWS)
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64")
+    # CMAKE_SYSTEM_PROCESSOR is the host CPU unless CMAKE_SYSTEM_NAME is set,
+    # so it is wrong for e.g. `-A ARM64` or an ARM64 cl.exe on an x64 host.
+    # Ask the compiler which architecture it targets instead; fall back to
+    # the Visual Studio platform (-A) and then to CMAKE_SYSTEM_PROCESSOR.
+    if(CMAKE_C_COMPILER_ARCHITECTURE_ID)
+        set(miktex_windows_target_arch "${CMAKE_C_COMPILER_ARCHITECTURE_ID}")
+    elseif(CMAKE_GENERATOR_PLATFORM)
+        set(miktex_windows_target_arch "${CMAKE_GENERATOR_PLATFORM}")
+    else()
+        set(miktex_windows_target_arch "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    string(TOLOWER "${miktex_windows_target_arch}" miktex_windows_target_arch)
+    if(miktex_windows_target_arch MATCHES "^(x64|amd64|x86_64)$")
         set(MIKTEX_TARGET_SYSTEM_CPU "x64")
         set(MIKTEX_MANIFEST_PROCESSOR_ARCHITECTURE "amd64")
-    else()
+    elseif(miktex_windows_target_arch MATCHES "^(arm64|aarch64)$")
         set(MIKTEX_TARGET_SYSTEM_CPU "arm64")
         set(MIKTEX_MANIFEST_PROCESSOR_ARCHITECTURE "arm64")
+    else()
+        message(FATAL_ERROR "Unsupported Windows target architecture \"${miktex_windows_target_arch}\": only x64 and arm64 are supported.")
     endif()
 elseif(APPLE AND CMAKE_OSX_ARCHITECTURES)
     # On macOS, CMAKE_SYSTEM_PROCESSOR is the host arch, which is wrong when
